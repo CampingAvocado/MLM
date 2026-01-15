@@ -143,6 +143,11 @@ impl<'a> MaM<'a> {
             bail!("Bad status for checkCookie: {}", status)
         }
 
+        // Check if the body contains "Success":true
+        if !text.contains("\"Success\":true") {
+             bail!("Session check failed (Success: false in response): {}", text)
+        }
+
         self.store_cookies().await;
         Ok(())
     }
