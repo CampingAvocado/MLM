@@ -107,7 +107,7 @@ impl<'a> MaM<'a> {
             db,
             user: Default::default(),
         };
-        if let Err(err) = mam.check_mam_id().await {
+        if let Err(err) = mam.user_info().await {
             if has_stored_mam_id {
                 warn!("Stored mam_id failed with {err}, falling back to config value");
                 let cookie = Cookie::build(("mam_id", mam_id.to_owned()))
@@ -117,7 +117,9 @@ impl<'a> MaM<'a> {
                     .write()
                     .unwrap()
                     .store_response_cookies([cookie].into_iter(), &url);
-                mam.check_mam_id().await?;
+                
+                // Retry with user_info()
+                mam.user_info().await?;
             } else {
                 return Err(err);
             }
