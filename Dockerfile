@@ -20,7 +20,7 @@ COPY server/Cargo.toml /app/server/
 # This step compiles only our dependencies and saves them in a layer. This is the most impactful time savings
 # Note the use of --mount=type=cache. On subsequent runs, we'll have the crates already downloaded
 WORKDIR /app
-RUN --mount=type=cache,target=/usr/local/cargo/registry cargo build --release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked cargo build --release
 
 # Copy our sources
 COPY ./mlm_db /app/mlm_db
@@ -32,7 +32,7 @@ COPY ./server /app/server
 # * We're mounting that cache again to use during the build, otherwise it's not present and we'll have to download those again - bad!
 # * EOF syntax is neat but not without its drawbacks. We need to `set -e`, otherwise a failing command is going to continue on
 # * Rust here is a bit fiddly, so we'll touch the files (even though we copied over them) to force a new build
-RUN --mount=type=cache,target=/usr/local/cargo/registry <<EOF
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked <<EOF
   set -e
   # update timestamps to force a new build
   touch /app/mlm_db/src/lib.rs
