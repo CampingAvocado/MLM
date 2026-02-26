@@ -12,6 +12,7 @@ mod logging;
 mod qbittorrent;
 mod snatchlist;
 mod stats;
+mod torrent_downloader;
 mod web;
 #[cfg(target_family = "windows")]
 mod windows;
@@ -29,7 +30,7 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use audiobookshelf::match_torrents_to_abs;
-use autograbber::{grab_selected_torrents, run_autograbber};
+use autograbber::run_autograbber;
 use cleaner::run_library_cleaner;
 use dirs::{config_dir, data_local_dir};
 use exporter::export_db;
@@ -45,6 +46,7 @@ use tokio::{
     sync::{Mutex, watch},
     time::sleep,
 };
+use torrent_downloader::grab_selected_torrents;
 use tracing::error;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
@@ -262,9 +264,10 @@ async fn app_main() -> Result<()> {
                                 })
                                 .await;
                         }
-                        let result = grab_selected_torrents(&config, &db, qbit, &mam)
-                            .await
-                            .context("grab_selected_torrents");
+                        let result =
+                            grab_selected_torrents(&config, &db, qbit, &qbit_conf.url, &mam)
+                                .await
+                                .context("grab_selected_torrents");
 
                         if let Err(err) = &result {
                             error!("Error grabbing selected torrents: {err:?}");
@@ -497,29 +500,6 @@ async fn app_main() -> Result<()> {
                 let mut linker_rx = linker_rx.clone();
                 tokio::spawn(async move {
                     loop {
-                        let qbit = match qbit::Api::new_login_username_password(
-                            &qbit_conf.url,
-                            &qbit_conf.username,
-                            &qbit_conf.password,
-                        )
-                        .await
-                        {
-                            Ok(qbit) => qbit,
-                            Err(err) => {
-                                error!("Error logging in to qbit {}: {err}", qbit_conf.url);
-                                stats
-                                    .update(|stats| {
-                                        stats.linker_run_at = Some(OffsetDateTime::now_utc());
-                                        stats.linker_result =
-                                            Some(Err(anyhow::Error::msg(format!(
-                                                "Error logging in to qbit {}: {err}",
-                                                qbit_conf.url,
-                                            ))));
-                                    })
-                                    .await;
-                                return;
-                            }
-                        };
                         select! {
                             () = sleep(Duration::from_secs(60 * config.link_interval)) => {},
                             result = linker_rx.changed() => {
@@ -541,6 +521,29 @@ async fn app_main() -> Result<()> {
                                 })
                                 .await;
                         }
+                        let qbit = match qbit::Api::new_login_username_password(
+                            &qbit_conf.url,
+                            &qbit_conf.username,
+                            &qbit_conf.password,
+                        )
+                        .await
+                        {
+                            Ok(qbit) => qbit,
+                            Err(err) => {
+                                error!("Error logging in to qbit {}: {err}", qbit_conf.url);
+                                stats
+                                    .update(|stats| {
+                                        stats.linker_run_at = Some(OffsetDateTime::now_utc());
+                                        stats.linker_result =
+                                            Some(Err(anyhow::Error::msg(format!(
+                                                "Error logging in to qbit {}: {err}",
+                                                qbit_conf.url,
+                                            ))));
+                                    })
+                                    .await;
+                                continue;
+                            }
+                        };
                         let result = link_torrents_to_library(
                             config.clone(),
                             db.clone(),

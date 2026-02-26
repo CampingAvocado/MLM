@@ -7,16 +7,14 @@ use std::{
 };
 
 use anyhow::{Context, Error, Result};
-use bytes::Bytes;
 use itertools::Itertools as _;
 use lava_torrent::torrent::v1::Torrent;
 use mlm_db::{
-    ClientStatus, DatabaseExt as _, DuplicateTorrent, ErroredTorrentId, Event, EventType,
-    MetadataSource, SelectedTorrent, Size, Timestamp, TorrentCost, TorrentKey, TorrentMeta,
-    VipStatus,
+    ClientStatus, DatabaseExt as _, DuplicateTorrent, Event, EventType, MetadataSource,
+    SelectedTorrent, Timestamp, TorrentCost, TorrentKey, TorrentMeta, VipStatus,
 };
 use mlm_mam::{
-    api::{MaM, RateLimitError, WedgeBuyError},
+    api::MaM,
     enums::{SearchKind, SearchTarget},
     meta::MetaError,
     search::{MaMTorrent, SearchFields, SearchQuery, SearchResult, Tor},
@@ -24,7 +22,6 @@ use mlm_mam::{
 };
 use mlm_parse::normalize_title;
 use native_db::{Database, db_type, transaction::RwTransaction};
-use qbit::parameters::{AddTorrent, AddTorrentType, TorrentFile};
 use tokio::{
     fs,
     sync::{MutexGuard, watch::Sender},
@@ -36,7 +33,8 @@ use uuid::Uuid;
 use crate::{
     audiobookshelf::{self as abs, Abs},
     config::{Config, Cost, SortBy, TorrentFilter, TorrentSearch, Type},
-    logging::{TorrentMetaError, update_errored_torrent, write_event},
+    logging::write_event,
+    torrent_downloader::get_mam_torrent_file,
 };
 
 static AUTOGRABBER_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -88,7 +86,7 @@ pub async fn run_autograbber(
         || autograb_config.cost == Cost::MetadataOnly
         || autograb_config.cost == Cost::MetadataOnlyAdd
     {
-        let selected_torrents = search_and_select_torrents(
+        search_and_select_torrents(
             &config,
             &db,
             &autograb_config,
@@ -101,89 +99,12 @@ pub async fn run_autograbber(
         )
         .await
         .context("search_torrents")?;
-        mam.add_unsats(selected_torrents).await;
     }
 
     if !config.qbittorrent.is_empty() {
         autograb_trigger.send(())?;
     }
 
-    Ok(())
-}
-
-#[instrument(skip_all)]
-pub async fn grab_selected_torrents(
-    config: &Config,
-    db: &Database<'_>,
-    qbit: &qbit::Api,
-    mam: &MaM<'_>,
-) -> Result<()> {
-    let selected_torrents = {
-        let r = db.r_transaction()?;
-        r.scan()
-            .primary::<mlm_db::SelectedTorrent>()?
-            .all()?
-            .filter(|t| t.as_ref().is_ok_and(|t| t.removed_at.is_none()))
-            .collect::<Result<Vec<_>, native_db::db_type::Error>>()
-    }?;
-    if selected_torrents.is_empty() {
-        trace!("no selected torrents");
-        return Ok(());
-    }
-
-    let user_info = mam.user_info().await?;
-    let max_torrents = user_info.unsat.limit.saturating_sub(user_info.unsat.count);
-
-    let downloading_size: f64 = selected_torrents
-        .iter()
-        .filter(|t| t.started_at.is_some())
-        .map(|t| t.meta.size.bytes() as f64)
-        .sum();
-
-    let mut remaining_buffer =
-        (user_info.uploaded_bytes - user_info.downloaded_bytes - downloading_size)
-            / config.min_ratio;
-    debug!(
-        "downloader, unsats: {:#?}; max_torrents: {max_torrents}; buffer: {}",
-        user_info.unsat,
-        Size::from_bytes(remaining_buffer as u64)
-    );
-
-    let mut snatched_torrents = 0;
-    for torrent in selected_torrents
-        .into_iter()
-        .filter(|t| t.started_at.is_none())
-    {
-        let max_torrents = max_torrents
-            .saturating_sub(torrent.unsat_buffer.unwrap_or(config.unsat_buffer))
-            .saturating_sub(snatched_torrents);
-        if max_torrents == 0 {
-            continue;
-        }
-        let buffer_after = remaining_buffer - torrent.meta.size.bytes() as f64;
-        if buffer_after <= 0.0 {
-            continue;
-        }
-
-        let result = grab_torrent(config, db, qbit, mam, torrent.clone())
-            .await
-            .map_err(|err| anyhow::Error::new(TorrentMetaError(torrent.meta.clone(), err)));
-
-        if result.is_ok() {
-            snatched_torrents += 1;
-            remaining_buffer = buffer_after;
-        }
-
-        update_errored_torrent(
-            db,
-            ErroredTorrentId::Grabber(torrent.mam_id),
-            torrent.meta.title,
-            result,
-        )
-        .await;
-
-        sleep(Duration::from_millis(1000)).await;
-    }
     Ok(())
 }
 
@@ -702,144 +623,6 @@ pub async fn select_torrents<T: Iterator<Item = MaMTorrent>>(
 }
 
 #[instrument(skip_all)]
-async fn grab_torrent(
-    config: &Config,
-    db: &Database<'_>,
-    qbit: &qbit::Api,
-    mam: &MaM<'_>,
-    torrent: SelectedTorrent,
-) -> Result<()> {
-    info!(
-        "Grabbing torrent \"{}\", with category {:?} and tags {:?}",
-        torrent.meta.title, torrent.category, torrent.tags,
-    );
-
-    let user_info = mam.user_info().await?;
-    let torrent_file_bytes = get_mam_torrent_file(mam, &torrent.dl_link).await?;
-    let torrent_file = Torrent::read_from_bytes(torrent_file_bytes.clone())?;
-    let hash = torrent_file.info_hash();
-
-    let wedge_buffer = torrent.wedge_buffer.unwrap_or(config.wedge_buffer);
-    let mut wedged = false;
-    if torrent.cost == TorrentCost::UseWedge || torrent.cost == TorrentCost::TryWedge {
-        if user_info.wedges <= wedge_buffer {
-            return Err(anyhow::Error::msg(format!(
-                "Fewer wedges ({}) than wedge_buffer ({})",
-                user_info.wedges, wedge_buffer
-            )));
-        }
-        info!("Using wedge on torrent \"{}\"", torrent.meta.title);
-        match mam.wedge_torrent(torrent.mam_id).await {
-            Ok(_) => {
-                wedged = true;
-                if let Some((_, user_info)) = mam.user.lock().await.as_mut() {
-                    user_info.wedges = user_info.wedges.saturating_sub(1);
-                }
-            }
-            Err(err) => {
-                warn!(
-                    "Failed applying wedge for torrent {}: {}",
-                    torrent.mam_id, err
-                );
-                match err.downcast::<WedgeBuyError>() {
-                    Ok(
-                        WedgeBuyError::IsVip
-                        | WedgeBuyError::IsGlobalFreeleech
-                        | WedgeBuyError::IsPersonalFreeleech,
-                    ) => {}
-                    _ => {
-                        if torrent.cost == TorrentCost::UseWedge {
-                            return Err(anyhow::Error::msg("Failed to apply wedge for torrent"));
-                        }
-                    }
-                }
-            }
-        }
-    } else if torrent.cost != TorrentCost::Ratio {
-        let Some(torrent_info) = mam.get_torrent_info(&hash).await? else {
-            return Err(anyhow::Error::msg("Could not get torrent from MaM"));
-        };
-        if !torrent_info.is_free() {
-            return Err(anyhow::Error::msg(format!(
-                "Torrent is no longer free, expected: {:?}",
-                torrent.cost
-            )));
-        }
-    }
-
-    qbit.add_torrent(AddTorrent {
-        torrents: AddTorrentType::Files(vec![TorrentFile {
-            filename: format!("{}.torrent", torrent.mam_id),
-            data: torrent_file_bytes.iter().copied().collect(),
-        }]),
-        stopped: config.add_torrents_stopped,
-        category: torrent.category.clone(),
-        tags: if torrent.tags.is_empty() {
-            None
-        } else {
-            Some(torrent.tags.clone())
-        },
-        ..Default::default()
-    })
-    .await?;
-
-    let mam_id = torrent.mam_id;
-    let cost = Some(torrent.cost);
-    let grabber = torrent.grabber.clone();
-    {
-        let (_guard, rw) = db.rw_async().await?;
-        // rw.insert(mlm_db::Torrent {
-        //     id: hash.clone(),
-        //     id_is_hash: true,
-        //     mam_id: torrent.meta.mam_id,
-        //     abs_id: None,
-        //     goodreads_id: torrent.goodreads_id,
-        //     library_path: None,
-        //     library_files: Default::default(),
-        //     linker: None,
-        //     category: torrent.category.clone(),
-        //     selected_audio_format: None,
-        //     selected_ebook_format: None,
-        //     title_search: torrent.title_search.clone(),
-        //     meta: torrent.meta.clone(),
-        //     created_at: Timestamp::now(),
-        //     replaced_with: None,
-        //     request_matadata_update: false,
-        //     library_mismatch: None,
-        //     client_status: None,
-        // })?;
-        let mut torrent = torrent;
-        torrent.hash = Some(hash.clone());
-        torrent.started_at = Some(Timestamp::now());
-        rw.upsert(torrent).map(|_| ()).or_else(|err| {
-            if let db_type::Error::KeyNotFound { .. } = err {
-                warn!("Got missing key when updating selected torrent");
-                Ok(())
-            } else {
-                Err(err)
-            }
-        })?;
-        rw.commit()?;
-    }
-
-    write_event(
-        db,
-        Event::new(
-            Some(hash),
-            Some(mam_id),
-            EventType::Grabbed {
-                grabber,
-                cost,
-                wedged,
-            },
-        ),
-    )
-    .await;
-
-    Ok(())
-}
-
-#[instrument(skip_all)]
 pub async fn add_metadata_only_torrent(
     (_guard, rw): (MutexGuard<'_, ()>, RwTransaction<'_>),
     torrent: MaMTorrent,
@@ -1025,22 +808,6 @@ pub async fn get_mam_torrent_hash(mam: &MaM<'_>, dl_link: &str) -> Result<String
     let torrent_file = Torrent::read_from_bytes(torrent_file_bytes.clone())?;
     let hash = torrent_file.info_hash();
     Ok(hash)
-}
-
-async fn get_mam_torrent_file(mam: &MaM<'_>, dl_link: &str) -> Result<Bytes> {
-    loop {
-        let result = mam.get_torrent_file(dl_link).await;
-
-        match result {
-            Ok(v) => return Ok(v),
-            Err(e) => match e.downcast::<RateLimitError>() {
-                Ok(_) => {
-                    sleep(Duration::from_millis(30_000)).await;
-                }
-                Err(e) => return Err(e),
-            },
-        };
-    }
 }
 
 fn add_duplicate_torrent(

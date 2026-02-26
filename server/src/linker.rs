@@ -16,7 +16,7 @@ use file_id::get_file_id;
 use log::error;
 use mlm_db::{
     ClientStatus, DatabaseExt as _, ErroredTorrentId, Event, EventType, LibraryMismatch,
-    SelectedTorrent, SelectedTorrentKey, Size, Timestamp, Torrent, TorrentMeta,
+    SelectedTorrent, SelectedTorrentKey, Size, Timestamp, Torrent, TorrentKey, TorrentMeta,
 };
 use mlm_mam::{api::MaM, meta::MetaError, search::MaMTorrent};
 use mlm_parse::normalize_title;
@@ -36,6 +36,7 @@ use crate::{
     cleaner::remove_library_files,
     config::{Config, Library, LibraryLinkMethod, QbitConfig},
     logging::{TorrentMetaError, update_errored_torrent, write_event},
+    qbittorrent::ensure_category_exists,
 };
 
 pub static DISK_PATTERN: Lazy<Regex> =
@@ -61,6 +62,21 @@ pub async fn link_torrents_to_library(
         let library = find_library(&config, &torrent);
         let r = db.r_transaction()?;
         let mut existing_torrent: Option<Torrent> = r.get().primary(torrent.hash.clone())?;
+        {
+            let selected_torrent: Option<SelectedTorrent> = r.get().secondary::<SelectedTorrent>(
+                SelectedTorrentKey::hash,
+                Some(torrent.hash.clone()),
+            )?;
+            if let Some(selected_torrent) = selected_torrent {
+                debug!(
+                    "Finished Downloading torrent {} {}",
+                    selected_torrent.mam_id, selected_torrent.meta.title
+                );
+                let (_guard, rw) = db.rw_async().await?;
+                rw.remove(selected_torrent)?;
+                rw.commit()?;
+            }
+        }
         if let Some(t) = &mut existing_torrent {
             let library_name = library.and_then(|l| l.tag_filters().name.as_ref());
             if t.linker.as_ref() != library_name {
@@ -168,21 +184,6 @@ pub async fn link_torrents_to_library(
             }
         }
 
-        {
-            let selected_torrent: Option<SelectedTorrent> = r.get().secondary::<SelectedTorrent>(
-                SelectedTorrentKey::hash,
-                Some(torrent.hash.clone()),
-            )?;
-            if let Some(selected_torrent) = selected_torrent {
-                debug!(
-                    "Finished Downloading torrent {} {}",
-                    selected_torrent.mam_id, selected_torrent.meta.title
-                );
-                let (_guard, rw) = db.rw_async().await?;
-                rw.remove(selected_torrent)?;
-                rw.commit()?;
-            }
-        }
         let Some(library) = library else {
             trace!(
                 "Could not find matching library for torrent \"{}\", save_path {}",
@@ -231,6 +232,7 @@ async fn match_torrent(
     library: &Library,
     existing_torrent: Option<Torrent>,
 ) -> Result<()> {
+    let mut existing_torrent = existing_torrent;
     let files = qbit.1.files(hash, None).await?;
     let selected_audio_format = select_format(
         &library.tag_filters().audio_types,
@@ -249,11 +251,25 @@ async fn match_torrent(
     let Some(mam_torrent) = mam.get_torrent_info(hash).await.context("get_mam_info")? else {
         bail!("Could not find torrent on mam");
     };
+    if existing_torrent.is_none()
+        && let Some(old_torrent) = db
+            .r_transaction()?
+            .get()
+            .secondary::<Torrent>(TorrentKey::mam_id, mam_torrent.id)?
+    {
+        if old_torrent.id != hash {
+            let (_guard, rw) = db.rw_async().await?;
+            rw.remove(old_torrent.clone())?;
+            rw.commit()?;
+        }
+        existing_torrent = Some(old_torrent);
+    }
     let meta = match mam_torrent.as_meta() {
         Ok(meta) => meta,
         Err(err) => {
             if let MetaError::UnknownMediaType(_) = err {
                 if let Some(on_invalid_torrent) = &qbit.0.on_invalid_torrent {
+                    let qbit_url = qbit.0.url.clone();
                     let qbit = qbit::Api::new_login_username_password(
                         &qbit.0.url,
                         &qbit.0.username,
@@ -262,6 +278,7 @@ async fn match_torrent(
                     .await?;
 
                     if let Some(category) = &on_invalid_torrent.category {
+                        ensure_category_exists(&qbit, &qbit_url, category).await?;
                         qbit.set_category(Some(vec![&torrent.hash]), category)
                             .await?;
                     }
