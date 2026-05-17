@@ -175,7 +175,7 @@ pub async fn start_webserver(context: Context) -> Result<()> {
         ServiceBuilder::new()
             .layer(middleware::from_fn(set_static_cache_control))
             .service(ServeFile::new(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("server/assets/favicon_dev.png"),
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/favicon_dev.png"),
             )),
     );
 
@@ -213,7 +213,7 @@ fn resolve_assets_dir() -> PathBuf {
         }
     }
 
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("server/assets")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
 }
 
 pub trait Page {
