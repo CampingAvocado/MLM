@@ -1549,7 +1549,7 @@ dependencies = [
 
 [[package]]
 name = "mlm"
-version = "0.4.6"
+version = "0.4.9"
 dependencies = [
  "anyhow",
  "askama",
@@ -2120,7 +2120,7 @@ dependencies = [
 [[package]]
 name = "qbit"
 version = "0.2.0"
-source = "git+https://github.com/StirlingMouse/qbittorrent-webui-api.git#ce47d16ee2f5a0c69fa0b9c476338299f03b2214"
+source = "git+https://github.com/CampingAvocado/qbittorrent-webui-api.git#f5e037370008324a6d1dc7c07d4e5e7b52d2c726"
 dependencies = [
  "bytes",
  "derive_builder",
