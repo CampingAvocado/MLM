@@ -11,7 +11,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use file_id::get_file_id;
 use log::error;
 use mlm_db::{
@@ -484,7 +484,7 @@ async fn link_torrent(
                 debug!("Skiping \"{}\"", file.name);
                 continue;
             }
-            let torrent_path = PathBuf::from(&file.name);
+            let torrent_path = qbit_file_path(&file.name);
             let mut path_components = torrent_path.components();
             let file_name = path_components.next_back().unwrap();
             let dir_name = path_components.next_back().and_then(|dir_name| {
@@ -505,8 +505,8 @@ async fn link_torrent(
             };
             let library_path = dir.join(&file_path);
             library_files.push(file_path.clone());
-            let download_path =
-                map_path(&qbit_config.path_mapping, &torrent.save_path).join(&file.name);
+            let download_path = map_path(&qbit_config.path_mapping, &torrent.save_path)
+                .join(&torrent_path);
             match library.method() {
                 LibraryLinkMethod::Hardlink => {
                     hard_link(&download_path, &library_path, &file_path)?
@@ -700,12 +700,16 @@ fn select_format(
 #[instrument(skip_all)]
 fn hard_link(download_path: &Path, library_path: &Path, file_path: &Path) -> Result<()> {
     debug!("linking: {:?} -> {:?}", download_path, library_path);
-    fs::hard_link(download_path, library_path).or_else(|err| {
+    let download_fs_path = windows_fs_path(download_path);
+    let library_fs_path = windows_fs_path(library_path);
+    fs::hard_link(&download_fs_path, &library_fs_path)
+        .map_err(|err| link_not_found_diagnostics(err, "hardlink", download_path, library_path))
+        .or_else(|err| {
             if err.kind() == ErrorKind::AlreadyExists {
                 trace!("AlreadyExists: {}", err);
-                let download_id = get_file_id(download_path);
+                let download_id = get_file_id(&download_fs_path);
                 trace!("got 1: {download_id:?}");
-                let library_id = get_file_id(library_path);
+                let library_id = get_file_id(&library_fs_path);
                 trace!("got 2: {library_id:?}");
                 if let (Ok(download_id), Ok(library_id)) = (download_id, library_id) {
                     trace!("got both");
@@ -717,8 +721,8 @@ fn hard_link(download_path: &Path, library_path: &Path, file_path: &Path) -> Res
                         bail!(
                             "File \"{:?}\" already exists, torrent file size: {}, library file size: {}",
                             file_path,
-                            fs::metadata(download_path).map_or("?".to_string(), |s| Size::from_bytes(file_size(&s)).to_string()),
-                            fs::metadata(library_path).map_or("?".to_string(), |s| Size::from_bytes(file_size(&s)).to_string())
+                            fs::metadata(&download_fs_path).map_or("?".to_string(), |s| Size::from_bytes(file_size(&s)).to_string()),
+                            fs::metadata(&library_fs_path).map_or("?".to_string(), |s| Size::from_bytes(file_size(&s)).to_string())
                         );
                     }
                 }
@@ -731,7 +735,10 @@ fn hard_link(download_path: &Path, library_path: &Path, file_path: &Path) -> Res
 #[instrument(skip_all)]
 fn copy(download_path: &Path, library_path: &Path) -> Result<()> {
     debug!("copying: {:?} -> {:?}", download_path, library_path);
-    fs::copy(download_path, library_path)?;
+    let download_fs_path = windows_fs_path(download_path);
+    let library_fs_path = windows_fs_path(library_path);
+    fs::copy(&download_fs_path, &library_fs_path)
+        .map_err(|err| link_not_found_diagnostics(err, "copy", download_path, library_path))?;
     Ok(())
 }
 
@@ -739,11 +746,105 @@ fn copy(download_path: &Path, library_path: &Path) -> Result<()> {
 fn symlink(download_path: &Path, library_path: &Path) -> Result<()> {
     debug!("symlinking: {:?} -> {:?}", download_path, library_path);
     #[cfg(target_family = "unix")]
-    std::os::unix::fs::symlink(download_path, library_path)?;
+    std::os::unix::fs::symlink(download_path, library_path)
+        .map_err(|err| link_not_found_diagnostics(err, "symlink", download_path, library_path))?;
     #[cfg(target_family = "windows")]
     bail!("symlink is not supported on Windows");
     #[allow(unreachable_code)]
     Ok(())
+}
+
+fn link_not_found_diagnostics(
+    err: std::io::Error,
+    operation: &str,
+    download_path: &Path,
+    library_path: &Path,
+) -> std::io::Error {
+    let is_not_found = err.kind() == ErrorKind::NotFound
+        || matches!(err.raw_os_error(), Some(2) | Some(3));
+    if !is_not_found {
+        return err;
+    }
+
+    let details = [
+        format!(
+            "{operation} failed with not-found error while linking files: {err}"
+        ),
+        probe_path("download_path", Some(download_path)),
+        probe_path("download_parent", download_path.parent()),
+        probe_path("library_path", Some(library_path)),
+        probe_path("library_parent", library_path.parent()),
+    ]
+    .join(" | ");
+
+    warn!("{details}");
+    std::io::Error::new(err.kind(), anyhow!(details))
+}
+
+fn probe_path(label: &str, path: Option<&Path>) -> String {
+    let Some(path) = path else {
+        return format!("{label}=<none>");
+    };
+
+    let symlink_meta = fs::symlink_metadata(path);
+    let exists = symlink_meta.is_ok();
+    let meta_state = match symlink_meta {
+        Ok(meta) if meta.is_dir() => "dir",
+        Ok(meta) if meta.is_file() => "file",
+        Ok(meta) if meta.file_type().is_symlink() => "symlink",
+        Ok(_) => "other",
+        Err(_) => "missing",
+    };
+    let first_missing = first_missing_component(path)
+        .map(|p| format!(", first_missing={}", p.display()))
+        .unwrap_or_default();
+
+    format!(
+        "{label}={} (exists={exists}, type={meta_state}{first_missing})",
+        path.display()
+    )
+}
+
+fn first_missing_component(path: &Path) -> Option<PathBuf> {
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        if fs::symlink_metadata(&current).is_err() {
+            return Some(current);
+        }
+    }
+    None
+}
+
+fn qbit_file_path(file_name: &str) -> PathBuf {
+    let mut path = PathBuf::new();
+    for part in file_name.split(['/', '\\']) {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        path.push(part);
+    }
+    path
+}
+
+#[cfg(target_family = "windows")]
+fn windows_fs_path(path: &Path) -> PathBuf {
+    if !path.is_absolute() {
+        return path.to_path_buf();
+    }
+    let path_str = path.as_os_str().to_string_lossy();
+    if path_str.starts_with(r"\\?\") {
+        return path.to_path_buf();
+    }
+    if let Some(without_unc) = path_str.strip_prefix(r"\\") {
+        return PathBuf::from(format!(r"\\?\UNC\{without_unc}"));
+    }
+    PathBuf::from(format!(r"\\?\{path_str}"))
+}
+
+#[cfg(not(target_family = "windows"))]
+fn windows_fs_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }
 
 pub fn file_size(m: &Metadata) -> u64 {
@@ -787,5 +888,60 @@ mod tests {
             map_path(&mappings, "/ebooks/torrent"),
             PathBuf::from("/ebooks/torrent")
         );
+    }
+
+    #[test]
+    fn test_qbit_file_path_mixed_separators() {
+        assert_eq!(
+            qbit_file_path(r"Isaac Asimov AudioBook Collection/Book 01\CD 07/Track01.mp3"),
+            PathBuf::from("Isaac Asimov AudioBook Collection")
+                .join("Book 01")
+                .join("CD 07")
+                .join("Track01.mp3")
+        );
+    }
+
+    #[test]
+    fn test_qbit_file_path_ignores_empty_and_dot_segments() {
+        assert_eq!(
+            qbit_file_path(r"/Book 01//./CD 07\.\Track01.mp3"),
+            PathBuf::from("Book 01")
+                .join("CD 07")
+                .join("Track01.mp3")
+        );
+    }
+
+    #[cfg(target_family = "windows")]
+    #[test]
+    fn test_windows_fs_path_drive_prefix() {
+        let path = PathBuf::from(r"F:\Sharon\Media\Audio\Hardlinks\file.m4b");
+        assert_eq!(
+            windows_fs_path(&path),
+            PathBuf::from(r"\\?\F:\Sharon\Media\Audio\Hardlinks\file.m4b")
+        );
+    }
+
+    #[cfg(target_family = "windows")]
+    #[test]
+    fn test_windows_fs_path_unc_prefix() {
+        let path = PathBuf::from(r"\\server\share\Audio\file.m4b");
+        assert_eq!(
+            windows_fs_path(&path),
+            PathBuf::from(r"\\?\UNC\server\share\Audio\file.m4b")
+        );
+    }
+
+    #[cfg(target_family = "windows")]
+    #[test]
+    fn test_windows_fs_path_preserves_existing_extended_prefix() {
+        let path = PathBuf::from(r"\\?\F:\Sharon\Media\Audio\Hardlinks\file.m4b");
+        assert_eq!(windows_fs_path(&path), path);
+    }
+
+    #[cfg(not(target_family = "windows"))]
+    #[test]
+    fn test_windows_fs_path_noop_on_non_windows() {
+        let path = PathBuf::from("/tmp/test/file.m4b");
+        assert_eq!(windows_fs_path(&path), path);
     }
 }
