@@ -7,7 +7,7 @@ use mlm_db::{
     DatabaseExt as _, ErroredTorrentId, Event, EventType, SelectedTorrent, Size, Timestamp,
     TorrentCost,
 };
-use mlm_mam::api::{MaM, RateLimitError, WedgeBuyError};
+use mlm_mam::api::{MaM, RateLimitError};
 use native_db::Database;
 use qbit::{
     models::Torrent as QbitTorrent,
@@ -52,8 +52,9 @@ pub async fn grab_selected_torrents(
         .map(|t| t.meta.size.bytes() as f64)
         .sum();
 
-    let mut remaining_buffer = (user_info.uploaded_bytes - user_info.downloaded_bytes - downloading_size)
-        / config.min_ratio;
+    let mut remaining_buffer =
+        (user_info.uploaded_bytes - user_info.downloaded_bytes - downloading_size)
+            / config.min_ratio;
     debug!(
         "downloader, unsats: {:#?}; max_torrents: {max_torrents}; buffer: {}",
         user_info.unsat,
@@ -130,7 +131,30 @@ async fn grab_torrent(
     );
 
     let user_info = mam.user_info().await?;
-    let (torrent_file_bytes, torrent_file) = fetch_torrent_file(db, mam, &torrent).await?;
+    let wedge_buffer = torrent.wedge_buffer.unwrap_or(config.wedge_buffer);
+    let will_wedge =
+        if torrent.cost == TorrentCost::UseWedge || torrent.cost == TorrentCost::TryWedge {
+            if user_info.wedges <= wedge_buffer {
+                if torrent.cost == TorrentCost::UseWedge {
+                    return Err(anyhow::Error::msg(format!(
+                        "Fewer wedges ({}) than wedge_buffer ({})",
+                        user_info.wedges, wedge_buffer
+                    )));
+                }
+                false
+            } else {
+                let already_free = mam
+                    .get_torrent_info_by_id(torrent.mam_id)
+                    .await?
+                    .map(|t| t.is_free() || t.vip)
+                    .unwrap_or(false);
+                !already_free
+            }
+        } else {
+            false
+        };
+    let (torrent_file_bytes, torrent_file) =
+        fetch_torrent_file(db, mam, &torrent, will_wedge).await?;
     let hash = torrent_file.info_hash();
 
     if let Some(qbit_torrent) = get_existing_qbit_torrent(config, qbit, qbit_url, &hash).await {
@@ -194,48 +218,25 @@ async fn grab_torrent(
         return Ok(());
     }
 
-    let wedge_buffer = torrent.wedge_buffer.unwrap_or(config.wedge_buffer);
     let mut wedged = false;
-    if torrent.cost == TorrentCost::UseWedge || torrent.cost == TorrentCost::TryWedge {
-        if user_info.wedges <= wedge_buffer {
-            return Err(anyhow::Error::msg(format!(
-                "Fewer wedges ({}) than wedge_buffer ({})",
-                user_info.wedges, wedge_buffer
-            )));
-        }
+    if will_wedge {
         info!("Using wedge on torrent \"{}\"", torrent.meta.title);
-        match mam.wedge_torrent(torrent.mam_id).await {
-            Ok(_) => {
-                wedged = true;
-                if let Some((_, user_info)) = mam.user.lock().await.as_mut() {
-                    user_info.wedges = user_info.wedges.saturating_sub(1);
-                }
-            }
-            Err(err) => {
-                warn!(
-                    "Failed applying wedge for torrent {}: {}",
-                    torrent.mam_id, err
-                );
-                match err.downcast::<WedgeBuyError>() {
-                    Ok(
-                        WedgeBuyError::IsVip
-                            | WedgeBuyError::IsGlobalFreeleech
-                            | WedgeBuyError::IsPersonalFreeleech,
-                    ) => {}
-                    _ => {
-                        if torrent.cost == TorrentCost::UseWedge {
-                            return Err(anyhow!("Failed to apply wedge for torrent"));
-                        }
-                    }
-                }
-            }
+        wedged = true;
+        if let Some((_, user_info)) = mam.user.lock().await.as_mut() {
+            user_info.wedges = user_info.wedges.saturating_sub(1);
         }
-    } else if torrent.cost != TorrentCost::Ratio {
+    } else if torrent.cost != TorrentCost::Ratio
+        && torrent.cost != TorrentCost::UseWedge
+        && torrent.cost != TorrentCost::TryWedge
+    {
         let Some(torrent_info) = mam.get_torrent_info(&hash).await? else {
             return Err(anyhow!("Could not get torrent from MaM"));
         };
         if !torrent_info.is_free() {
-            return Err(anyhow!("Torrent is no longer free, expected: {:?}", torrent.cost));
+            return Err(anyhow!(
+                "Torrent is no longer free, expected: {:?}",
+                torrent.cost
+            ));
         }
     }
 
@@ -363,8 +364,9 @@ async fn fetch_torrent_file(
     db: &Database<'_>,
     mam: &MaM<'_>,
     torrent: &SelectedTorrent,
+    wedge: bool,
 ) -> Result<(Bytes, Torrent)> {
-    let bytes = get_mam_torrent_file(mam, &torrent.dl_link, torrent.mam_id).await?;
+    let bytes = get_mam_torrent_file(mam, &torrent.dl_link, torrent.mam_id, wedge).await?;
     if let Ok(parsed) = Torrent::read_from_bytes(bytes.clone()) {
         return Ok((bytes, parsed));
     }
@@ -380,7 +382,7 @@ async fn fetch_torrent_file(
     }
 
     debug!("refreshing stale dl link for torrent {}", torrent.mam_id);
-    let bytes = get_mam_torrent_file(mam, &dl_link, torrent.mam_id).await?;
+    let bytes = get_mam_torrent_file(mam, &dl_link, torrent.mam_id, wedge).await?;
     let parsed =
         Torrent::read_from_bytes(bytes.clone()).map_err(|_| anyhow::Error::new(StaleDlLink))?;
 
@@ -399,10 +401,15 @@ async fn fetch_torrent_file(
 /// as long as the process runs.
 const MAX_RATE_LIMIT_RETRIES: u32 = 3;
 
-pub(crate) async fn get_mam_torrent_file(mam: &MaM<'_>, dl_hash: &str, tid: u64) -> Result<Bytes> {
+pub(crate) async fn get_mam_torrent_file(
+    mam: &MaM<'_>,
+    dl_hash: &str,
+    tid: u64,
+    wedge: bool,
+) -> Result<Bytes> {
     let mut attempts = 0;
     loop {
-        let result = mam.get_torrent_file(dl_hash, tid).await;
+        let result = mam.get_torrent_file(dl_hash, tid, wedge).await;
 
         match result {
             Ok(v) => return Ok(v),

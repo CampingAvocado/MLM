@@ -117,7 +117,7 @@ impl<'a> MaM<'a> {
                     .write()
                     .unwrap()
                     .store_response_cookies([cookie].into_iter(), &url);
-                
+
                 // Retry with user_info()
                 mam.user_info().await?;
             } else {
@@ -147,7 +147,10 @@ impl<'a> MaM<'a> {
 
         // Check if the body contains "Success":true
         if !text.contains("\"Success\":true") {
-             bail!("Session check failed (Success: false in response): {}", text)
+            bail!(
+                "Session check failed (Success: false in response): {}",
+                text
+            )
         }
 
         self.store_cookies().await;
@@ -191,10 +194,10 @@ impl<'a> MaM<'a> {
         }
     }
 
-    pub async fn get_torrent_file(&self, dl_hash: &str, tid: u64) -> Result<Bytes> {
+    pub async fn get_torrent_file(&self, dl_hash: &str, tid: u64, wedge: bool) -> Result<Bytes> {
         let resp = self
             .client
-            .get(torrent_file_url(dl_hash, tid))
+            .get(torrent_file_url(dl_hash, tid, wedge))
             .send()
             .await?
             .error_for_status()
@@ -369,8 +372,13 @@ impl<'a> MaM<'a> {
 /// `tid` is required. The API docs give the dl hash form as
 /// `/tor/download.php/<hash>?tid=<id>`; without the `tid` argument the request
 /// is invalid and the site rejects it.
-fn torrent_file_url(dl_hash: &str, tid: u64) -> String {
-    format!("https://www.myanonamouse.net/tor/download.php/{dl_hash}?tid={tid}")
+///
+/// `wedge` adds the `fl` flag, which spends a personal freeleech wedge on the
+/// torrent as part of the download. It replaces the bonusBuy.php endpoint,
+/// which the site no longer exposes for wedges.
+fn torrent_file_url(dl_hash: &str, tid: u64, wedge: bool) -> String {
+    let fl = if wedge { "&fl" } else { "" };
+    format!("https://www.myanonamouse.net/tor/download.php/{dl_hash}?tid={tid}{fl}")
 }
 
 #[cfg(test)]
@@ -380,8 +388,16 @@ mod tests {
     #[test]
     fn test_torrent_file_url_includes_tid() {
         assert_eq!(
-            torrent_file_url("abc123", 1234567890),
+            torrent_file_url("abc123", 1234567890, false),
             "https://www.myanonamouse.net/tor/download.php/abc123?tid=1234567890"
+        );
+    }
+
+    #[test]
+    fn test_torrent_file_url_wedge_adds_fl() {
+        assert_eq!(
+            torrent_file_url("abc123", 1234567890, true),
+            "https://www.myanonamouse.net/tor/download.php/abc123?tid=1234567890&fl"
         );
     }
 }
