@@ -113,7 +113,7 @@ async fn grab_torrent(
     );
 
     let user_info = mam.user_info().await?;
-    let torrent_file_bytes = get_mam_torrent_file(mam, &torrent.dl_link).await?;
+    let torrent_file_bytes = get_mam_torrent_file(mam, &torrent.dl_link, torrent.mam_id).await?;
     let torrent_file = Torrent::read_from_bytes(torrent_file_bytes.clone())?;
     let hash = torrent_file.info_hash();
 
@@ -336,9 +336,9 @@ async fn get_existing_qbit_torrent(
     None
 }
 
-pub(crate) async fn get_mam_torrent_file(mam: &MaM<'_>, dl_link: &str) -> Result<Bytes> {
+pub(crate) async fn get_mam_torrent_file(mam: &MaM<'_>, dl_hash: &str, tid: u64) -> Result<Bytes> {
     loop {
-        let result = mam.get_torrent_file(dl_link).await;
+        let result = mam.get_torrent_file(dl_hash, tid).await;
 
         match result {
             Ok(v) => return Ok(v),

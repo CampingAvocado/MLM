@@ -789,7 +789,9 @@ async fn update_selected_torrent_meta(
             .map(|field| format!("  {}: {} -> {}", field.field, field.from, field.to))
             .join("\n")
     );
-    let hash = get_mam_torrent_hash(mam, &torrent.dl_link).await.ok();
+    let hash = get_mam_torrent_hash(mam, &torrent.dl_link, torrent.mam_id)
+        .await
+        .ok();
     let mut torrent = torrent;
     torrent.meta = meta;
     rw.upsert(torrent)?;
@@ -803,8 +805,8 @@ async fn update_selected_torrent_meta(
     Ok(())
 }
 
-pub async fn get_mam_torrent_hash(mam: &MaM<'_>, dl_link: &str) -> Result<String> {
-    let torrent_file_bytes = get_mam_torrent_file(mam, dl_link).await?;
+pub async fn get_mam_torrent_hash(mam: &MaM<'_>, dl_hash: &str, tid: u64) -> Result<String> {
+    let torrent_file_bytes = get_mam_torrent_file(mam, dl_hash, tid).await?;
     let torrent_file = Torrent::read_from_bytes(torrent_file_bytes.clone())?;
     let hash = torrent_file.info_hash();
     Ok(hash)
