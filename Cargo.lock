@@ -1377,7 +1377,7 @@ dependencies = [
 [[package]]
 name = "lava_torrent"
 version = "0.11.1"
-source = "git+https://github.com/StirlingMouse/lava_torrent.git#9d8ff9304cc7419c6b6b6274daca653b629f0ace"
+source = "git+https://github.com/ttlajus/lava_torrent.git?rev=9d8ff9304cc7419c6b6b6274daca653b629f0ace#9d8ff9304cc7419c6b6b6274daca653b629f0ace"
 dependencies = [
  "conv",
  "itertools 0.10.5",
@@ -1683,7 +1683,7 @@ dependencies = [
 [[package]]
 name = "native_db"
 version = "0.8.2"
-source = "git+https://github.com/StirlingMouse/native_db.git?branch=0.8.x#cddaafe0f6863146fd0879cae88fdb613bc50b47"
+source = "git+https://github.com/vincent-herlemont/native_db.git?rev=cddaafe0f6863146fd0879cae88fdb613bc50b47#cddaafe0f6863146fd0879cae88fdb613bc50b47"
 dependencies = [
  "native_db_macro",
  "native_model",
@@ -1698,7 +1698,7 @@ dependencies = [
 [[package]]
 name = "native_db_macro"
 version = "0.8.2"
-source = "git+https://github.com/StirlingMouse/native_db.git?branch=0.8.x#cddaafe0f6863146fd0879cae88fdb613bc50b47"
+source = "git+https://github.com/vincent-herlemont/native_db.git?rev=cddaafe0f6863146fd0879cae88fdb613bc50b47#cddaafe0f6863146fd0879cae88fdb613bc50b47"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2435,7 +2435,7 @@ dependencies = [
 [[package]]
 name = "sanitize-filename"
 version = "0.7.0-beta"
-source = "git+https://github.com/StirlingMouse/sanitize-filename.git#2861a903d9e79d5cb2f613af4a282ce8a336b6e9"
+source = "git+https://github.com/kardeiz/sanitize-filename.git?rev=2861a903d9e79d5cb2f613af4a282ce8a336b6e9#2861a903d9e79d5cb2f613af4a282ce8a336b6e9"
 
 [[package]]
 name = "schannel"
