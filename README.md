@@ -24,4 +24,4 @@ Limitations:
 - MLM works with torrents from MaM, meaning files not via a torrent from here can not be handled (however if you link these with [booktree](https://github.com/myxdvz/booktree), MLM will not touch those files)
 
 It is available as both a docker container and a Windows application. See the docs for install and configuration instructions:
-https://stirlingmouse.github.io/MLM/introduction.html
+https://campingavocado.github.io/MLM/introduction.html
