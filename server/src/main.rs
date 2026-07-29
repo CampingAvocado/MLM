@@ -217,7 +217,9 @@ async fn app_main() -> Result<()> {
     let mam = if config.mam_id.is_empty() {
         Err(anyhow::Error::msg("No mam_id set"))
     } else {
-        MaM::new(&config.mam_id, db.clone()).await.map(Arc::new)
+        MaM::new(&config.mam_id, db.clone(), env!("CARGO_PKG_VERSION"))
+            .await
+            .map(Arc::new)
     };
     if let Ok(mam) = &mam {
         {

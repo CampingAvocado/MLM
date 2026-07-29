@@ -71,7 +71,7 @@ pub struct MaM<'a> {
 }
 
 impl<'a> MaM<'a> {
-    pub async fn new(mam_id: &str, db: Arc<Database<'a>>) -> Result<MaM<'a>> {
+    pub async fn new(mam_id: &str, db: Arc<Database<'a>>, version: &str) -> Result<MaM<'a>> {
         let jar: CookieStoreRwLock = Default::default();
         let url = "https://www.myanonamouse.net/json".parse::<Url>().unwrap();
 
@@ -97,7 +97,7 @@ impl<'a> MaM<'a> {
         let jar = Arc::new(jar);
         let client = reqwest::Client::builder()
             .cookie_provider(jar.clone())
-            .user_agent("MLM")
+            .user_agent(format!("MLM/{version}"))
             .timeout(Duration::from_secs(20))
             .build()?;
 
