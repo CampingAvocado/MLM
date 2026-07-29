@@ -54,7 +54,7 @@
   <p>Language: {{ language.to_str() }}</p>
 {% endif %}
 {% if let Some(cat) = torrent.meta.cat %}
-  <p>Category: {{ torrent.meta.media_type.as_str() }} - {{ cat.as_str() }} {{ self::flag_icons(torrent.meta) }}</p>
+  <p>Category: {{ torrent.meta.media_type.as_str() }} - {{ cat }} {{ self::flag_icons(torrent.meta) }}</p>
 {% else %}
   <p>Category: {{ torrent.meta.media_type.as_str() }} {{ self::flag_icons(torrent.meta) }}</p>
 {% endif %}
@@ -138,7 +138,7 @@
   <form method=post class=row style="justify-content:flex-start">
     Category: <select name=category>
       {% for cat in qbit.categories %}
-        <option {% if &cat.name == &qbit.torrent.category %}selected{% endif %}>{{ cat.name }}</option>
+        <option {% if cat.as_str() == qbit.torrent.category.as_str() %}selected{% endif %}>{{ cat }}</option>
       {% endfor %}
     </select>
     Tags: <div class=option_group>

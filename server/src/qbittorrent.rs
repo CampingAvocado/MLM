@@ -37,7 +37,7 @@ impl CategoryCache {
         }
         drop(cache);
 
-        let categories: HashMap<String, ()> = qbit.categories().await?.into_keys().map(|k| (k, ())).collect();
+        let categories: HashMap<String, ()> = qbit.categories().await?.into_iter().map(|k| (k, ())).collect();
         let mut cache = self.cache.write().await;
         cache.insert(url.to_string(), (categories.clone(), now));
 

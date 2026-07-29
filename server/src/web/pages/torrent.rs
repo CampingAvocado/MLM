@@ -20,7 +20,7 @@ use mlm_mam::{
 };
 use native_db::Database;
 use qbit::{
-    models::{Category, Torrent as QbitTorrent, Tracker},
+    models::{Torrent as QbitTorrent, Tracker},
     parameters::TorrentState,
 };
 use regex::Regex;
@@ -197,8 +197,8 @@ async fn torrent_page_id(
             qbittorrent::get_torrent(&config, &torrent.id).await?
     {
         let trackers = qbit.trackers(&torrent.id).await?;
-        let mut categories = qbit.categories().await?.into_values().collect_vec();
-        categories.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut categories = qbit.categories().await?;
+        categories.sort_by(|a, b| a.cmp(&b));
         let tags = qbit.tags().await?;
 
         wanted_path = find_library(&config, &qbit_torrent).and_then(|library| {
@@ -483,7 +483,7 @@ impl Page for TorrentMamPageTemplate {
 struct QbitData {
     torrent: QbitTorrent,
     trackers: Vec<Tracker>,
-    categories: Vec<Category>,
+    categories: Vec<String>,
     tags: Vec<String>,
     torrent_tags: BTreeSet<String>,
 }
