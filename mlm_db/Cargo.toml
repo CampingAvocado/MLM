@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.100"
 itertools = "0.14.0"
 # native_db = "0.8.2"
-native_db = { git = "https://github.com/StirlingMouse/native_db.git", branch = "0.8.x" }
+native_db = { git = "https://github.com/vincent-herlemont/native_db.git", rev = "cddaafe0f6863146fd0879cae88fdb613bc50b47" }
 native_model = "0.4.20"
 matchr = "0.2.5"
 mlm_parse = { path = "../mlm_parse" }
