@@ -113,7 +113,7 @@ async fn grab_torrent(
     );
 
     let user_info = mam.user_info().await?;
-    let torrent_file_bytes = get_mam_torrent_file(mam, &torrent.dl_link).await?;
+    let torrent_file_bytes = get_mam_torrent_file(mam, &torrent.dl_link, torrent.mam_id).await?;
     let torrent_file = Torrent::read_from_bytes(torrent_file_bytes.clone())?;
     let hash = torrent_file.info_hash();
 
@@ -336,14 +336,25 @@ async fn get_existing_qbit_torrent(
     None
 }
 
-pub(crate) async fn get_mam_torrent_file(mam: &MaM<'_>, dl_link: &str) -> Result<Bytes> {
+/// How many times to retry a single download after being rate limited before
+/// giving up on it. Retrying forever means one torrent can keep requesting for
+/// as long as the process runs.
+const MAX_RATE_LIMIT_RETRIES: u32 = 3;
+
+pub(crate) async fn get_mam_torrent_file(mam: &MaM<'_>, dl_hash: &str, tid: u64) -> Result<Bytes> {
+    let mut attempts = 0;
     loop {
-        let result = mam.get_torrent_file(dl_link).await;
+        let result = mam.get_torrent_file(dl_hash, tid).await;
 
         match result {
             Ok(v) => return Ok(v),
             Err(e) => match e.downcast::<RateLimitError>() {
-                Ok(_) => {
+                Ok(rate_limit) => {
+                    attempts += 1;
+                    if attempts > MAX_RATE_LIMIT_RETRIES {
+                        warn!("Giving up on torrent {tid} after {attempts} rate limited requests");
+                        return Err(anyhow::Error::new(rate_limit));
+                    }
                     sleep(Duration::from_millis(30_000)).await;
                 }
                 Err(e) => return Err(e),

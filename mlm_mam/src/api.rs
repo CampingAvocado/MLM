@@ -191,12 +191,10 @@ impl<'a> MaM<'a> {
         }
     }
 
-    pub async fn get_torrent_file(&self, dl_hash: &str) -> Result<Bytes> {
+    pub async fn get_torrent_file(&self, dl_hash: &str, tid: u64) -> Result<Bytes> {
         let resp = self
             .client
-            .get(format!(
-                "https://www.myanonamouse.net/tor/download.php/{dl_hash}"
-            ))
+            .get(torrent_file_url(dl_hash, tid))
             .send()
             .await?
             .error_for_status()
@@ -363,5 +361,27 @@ impl<'a> MaM<'a> {
         if ok {
             trace!("stored new mam_id");
         }
+    }
+}
+
+/// Build the download URL for a torrent.
+///
+/// `tid` is required. The API docs give the dl hash form as
+/// `/tor/download.php/<hash>?tid=<id>`; without the `tid` argument the request
+/// is invalid and the site rejects it.
+fn torrent_file_url(dl_hash: &str, tid: u64) -> String {
+    format!("https://www.myanonamouse.net/tor/download.php/{dl_hash}?tid={tid}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_torrent_file_url_includes_tid() {
+        assert_eq!(
+            torrent_file_url("abc123", 1234567890),
+            "https://www.myanonamouse.net/tor/download.php/abc123?tid=1234567890"
+        );
     }
 }
