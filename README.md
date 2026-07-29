@@ -1,3 +1,12 @@
+> **Note:**
+> This began as a personal fork of the MLM project by StirlingMouse to fix a few minor issues.
+> Because the original author took down their repository, this is now the only surviving, up-to-date version of the code.
+>
+> Please note that I am not a Rust developer and currently cannot properly adopt or maintain this project.
+> 
+> While I (and other contributors) may occasionally merge small, bare-minimum fixes to keep basic functionality alive, this is done without any guarantees.
+> If you want to see this project thrive and have the knowledge to maintain it, you are highly encouraged to fork this repository and take the lead.
+
 # MLM - Myanonamouse Library Manager
 
 MLM is both an auto downloader and a library organizer. Both parts are optional so either can be replaced with e.g. RSS or [booktree](https://github.com/myxdvz/booktree) if you prefer. And even if you use both, you can still add torrents manually and have them organized, and/or use booktree for collections or files that are not from MaM.
