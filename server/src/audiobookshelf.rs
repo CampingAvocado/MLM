@@ -523,7 +523,7 @@ impl Abs {
         headers.insert(AUTHORIZATION, format!("Bearer {}", config.token).parse()?);
         let client = reqwest::Client::builder()
             .default_headers(headers)
-            .user_agent("MLM")
+            .user_agent(concat!("MLM/", env!("CARGO_PKG_VERSION")))
             .build()?;
 
         Ok(Abs {
