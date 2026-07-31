@@ -366,7 +366,7 @@ pub async fn torrent_page_post_id(
                 return Err(anyhow::Error::msg("Could not find torrent").into());
             };
 
-            ensure_category_exists(&qbit, &qbit_conf.url, &form.category).await?;
+            ensure_category_exists(&qbit, &form.category).await?;
             qbit.set_category(Some(vec![&id]), &form.category).await?;
             let mut torrent_tags = torrent.tags.split(", ").collect::<BTreeSet<&str>>();
             if torrent.tags.is_empty() {
