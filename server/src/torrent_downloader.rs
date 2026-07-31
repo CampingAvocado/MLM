@@ -76,9 +76,26 @@ pub async fn grab_selected_torrents(
             continue;
         }
 
-        let result = grab_torrent(config, db, qbit, qbit_url, mam, torrent.clone())
-            .await
-            .map_err(|err| anyhow::Error::new(TorrentMetaError(torrent.meta.clone(), err)));
+        let result = grab_torrent(config, db, qbit, qbit_url, mam, torrent.clone()).await;
+
+        // A stale dl link can't be grabbed on a later pass either, so drop the
+        // selection instead of asking the site for it every run. It stays on the
+        // errors page, and restoring it from the selected page retries.
+        if result
+            .as_ref()
+            .err()
+            .is_some_and(|err| err.downcast_ref::<StaleDlLink>().is_some())
+        {
+            let (_guard, rw) = db.rw_async().await?;
+            if let Some(mut stale) = rw.get().primary::<SelectedTorrent>(torrent.mam_id)? {
+                stale.removed_at = Some(Timestamp::now());
+                rw.upsert(stale)?;
+            }
+            rw.commit()?;
+        }
+
+        let result =
+            result.map_err(|err| anyhow::Error::new(TorrentMetaError(torrent.meta.clone(), err)));
 
         if result.is_ok() {
             snatched_torrents += 1;
@@ -113,8 +130,7 @@ async fn grab_torrent(
     );
 
     let user_info = mam.user_info().await?;
-    let torrent_file_bytes = get_mam_torrent_file(mam, &torrent.dl_link, torrent.mam_id).await?;
-    let torrent_file = Torrent::read_from_bytes(torrent_file_bytes.clone())?;
+    let (torrent_file_bytes, torrent_file) = fetch_torrent_file(db, mam, &torrent).await?;
     let hash = torrent_file.info_hash();
 
     if let Some(qbit_torrent) = get_existing_qbit_torrent(config, qbit, qbit_url, &hash).await {
@@ -334,6 +350,48 @@ async fn get_existing_qbit_torrent(
     }
 
     None
+}
+
+#[derive(thiserror::Error, Debug)]
+#[error("MaM did not return a torrent file, the dl link is probably stale")]
+pub struct StaleDlLink;
+
+/// Fetch and parse a torrent file, refreshing the stored dl link once if what
+/// comes back isn't a torrent. A dl hash goes stale after a while, and the site
+/// then answers with something that isn't bencode at all.
+async fn fetch_torrent_file(
+    db: &Database<'_>,
+    mam: &MaM<'_>,
+    torrent: &SelectedTorrent,
+) -> Result<(Bytes, Torrent)> {
+    let bytes = get_mam_torrent_file(mam, &torrent.dl_link, torrent.mam_id).await?;
+    if let Ok(parsed) = Torrent::read_from_bytes(bytes.clone()) {
+        return Ok((bytes, parsed));
+    }
+
+    let Some(info) = mam.get_torrent_info_by_id(torrent.mam_id).await? else {
+        return Err(anyhow::Error::new(StaleDlLink));
+    };
+    let Some(dl_link) = info.dl else {
+        return Err(anyhow::Error::new(StaleDlLink));
+    };
+    if dl_link == torrent.dl_link {
+        return Err(anyhow::Error::new(StaleDlLink));
+    }
+
+    debug!("refreshing stale dl link for torrent {}", torrent.mam_id);
+    let bytes = get_mam_torrent_file(mam, &dl_link, torrent.mam_id).await?;
+    let parsed =
+        Torrent::read_from_bytes(bytes.clone()).map_err(|_| anyhow::Error::new(StaleDlLink))?;
+
+    let (_guard, rw) = db.rw_async().await?;
+    if let Some(mut stored) = rw.get().primary::<SelectedTorrent>(torrent.mam_id)? {
+        stored.dl_link = dl_link;
+        rw.upsert(stored)?;
+    }
+    rw.commit()?;
+
+    Ok((bytes, parsed))
 }
 
 /// How many times to retry a single download after being rate limited before
