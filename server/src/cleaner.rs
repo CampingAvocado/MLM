@@ -44,7 +44,7 @@ pub async fn run_library_cleaner(config: Arc<Config>, db: Arc<Database<'_>>) -> 
 
 #[instrument(skip_all)]
 async fn process_batch(config: &Config, db: &Database<'_>, batch: Vec<Torrent>) -> Result<()> {
-    if batch.len() == 1 {
+    if batch.len() < 2 {
         return Ok(());
     };
     let mut batch = batch
