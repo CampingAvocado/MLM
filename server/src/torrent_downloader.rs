@@ -13,6 +13,7 @@ use qbit::{
     models::Torrent as QbitTorrent,
     parameters::{AddTorrent, AddTorrentType, TorrentFile, TorrentListParams, TorrentState},
 };
+use mlm_mam::api::AccountBlockedError;
 use tokio::time::sleep;
 use tracing::{debug, info, instrument, trace, warn};
 
@@ -78,6 +79,11 @@ pub async fn grab_selected_torrents(
 
         let result = grab_torrent(config, db, qbit, qbit_url, mam, torrent.clone()).await;
 
+        // if the account is temporarly blocked, mlm will still try to download new files every second
+        // resulting in a unnecessary load on the server and a prolonged penalty
+        // here it gets checked if a blocked message gets returned
+        let account_blocked = result.as_ref().err().is_some_and(|err| err.is::<AccountBlockedError>());
+                
         // A stale dl link can't be grabbed on a later pass either, so drop the
         // selection instead of asking the site for it every run. It stays on the
         // errors page, and restoring it from the selected page retries.
@@ -97,6 +103,7 @@ pub async fn grab_selected_torrents(
         let result =
             result.map_err(|err| anyhow::Error::new(TorrentMetaError(torrent.meta.clone(), err)));
 
+
         if result.is_ok() {
             snatched_torrents += 1;
             remaining_buffer = buffer_after;
@@ -109,6 +116,11 @@ pub async fn grab_selected_torrents(
             result,
         )
         .await;
+
+        if account_blocked {
+            warn!("Account issue (406 Not Acceptable) detected. Stopping current autograb cycle.");
+            break;
+        }
 
         sleep(Duration::from_millis(1000)).await;
     }
