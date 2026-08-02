@@ -10,7 +10,6 @@ use mlm_db::DatabaseExt as _;
 use native_db::Database;
 use reqwest::Url;
 use reqwest_cookie_store::CookieStoreRwLock;
-use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, UtcDateTime};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, trace, warn};
@@ -22,12 +21,6 @@ use crate::{
     user_data::UserResponse,
     user_torrent::UserDetailsTorrentResponse,
 };
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BonusBuyResult {
-    pub success: bool,
-    pub error: Option<String>,
-}
 
 #[derive(thiserror::Error, Debug)]
 #[error("Hit MaM rate limit")]
@@ -49,18 +42,6 @@ impl RateLimitError {
             Ok(())
         }
     }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum WedgeBuyError {
-    #[error("torrent is VIP")]
-    IsVip,
-    #[error("torrent is global freeleech")]
-    IsGlobalFreeleech,
-    #[error("torrent is personal freeleech")]
-    IsPersonalFreeleech,
-    #[error("Unknown error: {0}")]
-    Unknown(String),
 }
 
 pub struct MaM<'a> {
@@ -309,36 +290,6 @@ impl<'a> MaM<'a> {
         })?;
         self.store_cookies().await;
         Ok(resp)
-    }
-
-    pub async fn wedge_torrent(&self, mam_id: u64) -> Result<()> {
-        let timestamp = UtcDateTime::now().unix_timestamp() * 1000;
-        let resp: BonusBuyResult = self
-            .client
-            .get(format!(
-                "https://www.myanonamouse.net/json/bonusBuy.php/{timestamp}"
-            ))
-            .query(&[
-                ("spendtype", "personalFL"),
-                ("torrentid", mam_id.to_string().as_str()),
-                ("timestamp", timestamp.to_string().as_str()),
-            ])
-            .send()
-            .await?
-            .json()
-            .await?;
-        self.store_cookies().await;
-        if resp.success {
-            return Ok(());
-        }
-        let err = match resp.error.as_deref() {
-            Some("This Torrent is VIP") => WedgeBuyError::IsVip,
-            Some("Cannot spend FL Wedges on Freeleech Picks") => WedgeBuyError::IsGlobalFreeleech,
-            Some("This is already a personal freeleech") => WedgeBuyError::IsPersonalFreeleech,
-            Some(err) => WedgeBuyError::Unknown(err.to_owned()),
-            None => WedgeBuyError::Unknown("No error message provided".to_owned()),
-        };
-        Err(anyhow::Error::new(err))
     }
 
     async fn store_cookies(&self) {
