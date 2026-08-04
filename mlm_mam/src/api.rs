@@ -10,7 +10,6 @@ use mlm_db::DatabaseExt as _;
 use native_db::Database;
 use reqwest::Url;
 use reqwest_cookie_store::CookieStoreRwLock;
-use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, UtcDateTime};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, trace, warn};
@@ -22,12 +21,6 @@ use crate::{
     user_data::UserResponse,
     user_torrent::UserDetailsTorrentResponse,
 };
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BonusBuyResult {
-    pub success: bool,
-    pub error: Option<String>,
-}
 
 #[derive(thiserror::Error, Debug)]
 #[error("Account is blocked or unsat limit reached (HTTP 406 Not Acceptable)")]
@@ -57,18 +50,6 @@ impl RateLimitError {
             Ok(())
         }
     }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum WedgeBuyError {
-    #[error("torrent is VIP")]
-    IsVip,
-    #[error("torrent is global freeleech")]
-    IsGlobalFreeleech,
-    #[error("torrent is personal freeleech")]
-    IsPersonalFreeleech,
-    #[error("Unknown error: {0}")]
-    Unknown(String),
 }
 
 pub struct MaM<'a> {
@@ -125,7 +106,7 @@ impl<'a> MaM<'a> {
                     .write()
                     .unwrap()
                     .store_response_cookies([cookie].into_iter(), &url);
-                
+
                 // Retry with user_info()
                 mam.user_info().await?;
             } else {
@@ -155,7 +136,10 @@ impl<'a> MaM<'a> {
 
         // Check if the body contains "Success":true
         if !text.contains("\"Success\":true") {
-             bail!("Session check failed (Success: false in response): {}", text)
+            bail!(
+                "Session check failed (Success: false in response): {}",
+                text
+            )
         }
 
         self.store_cookies().await;
@@ -199,10 +183,10 @@ impl<'a> MaM<'a> {
         }
     }
 
-    pub async fn get_torrent_file(&self, dl_hash: &str, tid: u64) -> Result<Bytes> {
+    pub async fn get_torrent_file(&self, dl_hash: &str, tid: u64, wedge: bool) -> Result<Bytes> {
         let resp = self
             .client
-            .get(torrent_file_url(dl_hash, tid))
+            .get(torrent_file_url(dl_hash, tid, wedge))
             .send()
             .await?
             .error_for_status()
@@ -316,36 +300,6 @@ impl<'a> MaM<'a> {
         Ok(resp)
     }
 
-    pub async fn wedge_torrent(&self, mam_id: u64) -> Result<()> {
-        let timestamp = UtcDateTime::now().unix_timestamp() * 1000;
-        let resp: BonusBuyResult = self
-            .client
-            .get(format!(
-                "https://www.myanonamouse.net/json/bonusBuy.php/{timestamp}"
-            ))
-            .query(&[
-                ("spendtype", "personalFL"),
-                ("torrentid", mam_id.to_string().as_str()),
-                ("timestamp", timestamp.to_string().as_str()),
-            ])
-            .send()
-            .await?
-            .json()
-            .await?;
-        self.store_cookies().await;
-        if resp.success {
-            return Ok(());
-        }
-        let err = match resp.error.as_deref() {
-            Some("This Torrent is VIP") => WedgeBuyError::IsVip,
-            Some("Cannot spend FL Wedges on Freeleech Picks") => WedgeBuyError::IsGlobalFreeleech,
-            Some("This is already a personal freeleech") => WedgeBuyError::IsPersonalFreeleech,
-            Some(err) => WedgeBuyError::Unknown(err.to_owned()),
-            None => WedgeBuyError::Unknown("No error message provided".to_owned()),
-        };
-        Err(anyhow::Error::new(err))
-    }
-
     async fn store_cookies(&self) {
         let Ok(jar) = self.jar.read() else {
             return;
@@ -377,8 +331,13 @@ impl<'a> MaM<'a> {
 /// `tid` is required. The API docs give the dl hash form as
 /// `/tor/download.php/<hash>?tid=<id>`; without the `tid` argument the request
 /// is invalid and the site rejects it.
-fn torrent_file_url(dl_hash: &str, tid: u64) -> String {
-    format!("https://www.myanonamouse.net/tor/download.php/{dl_hash}?tid={tid}")
+///
+/// `wedge` adds the `fl` flag, which spends a personal freeleech wedge on the
+/// torrent as part of the download. It replaces the bonusBuy.php endpoint,
+/// which the site no longer exposes for wedges.
+fn torrent_file_url(dl_hash: &str, tid: u64, wedge: bool) -> String {
+    let fl = if wedge { "&fl" } else { "" };
+    format!("https://www.myanonamouse.net/tor/download.php/{dl_hash}?tid={tid}{fl}")
 }
 
 #[cfg(test)]
@@ -388,8 +347,16 @@ mod tests {
     #[test]
     fn test_torrent_file_url_includes_tid() {
         assert_eq!(
-            torrent_file_url("abc123", 1234567890),
+            torrent_file_url("abc123", 1234567890, false),
             "https://www.myanonamouse.net/tor/download.php/abc123?tid=1234567890"
+        );
+    }
+
+    #[test]
+    fn test_torrent_file_url_wedge_adds_fl() {
+        assert_eq!(
+            torrent_file_url("abc123", 1234567890, true),
+            "https://www.myanonamouse.net/tor/download.php/abc123?tid=1234567890&fl"
         );
     }
 }
