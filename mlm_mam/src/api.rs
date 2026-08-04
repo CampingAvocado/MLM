@@ -23,6 +23,10 @@ use crate::{
 };
 
 #[derive(thiserror::Error, Debug)]
+#[error("Account is blocked or unsat limit reached (HTTP 406 Not Acceptable)")]
+pub struct AccountBlockedError;
+
+#[derive(thiserror::Error, Debug)]
 #[error("Hit MaM rate limit")]
 pub struct RateLimitError;
 
@@ -30,6 +34,8 @@ impl RateLimitError {
     pub fn maybe(error: reqwest::Error) -> anyhow::Error {
         if error.status().is_some_and(|s| s == 429) {
             anyhow::Error::new(RateLimitError)
+        } else if error.status().is_some_and(|s| s == 406){
+            anyhow::Error::new(AccountBlockedError)
         } else {
             anyhow::Error::new(error)
         }
@@ -38,6 +44,8 @@ impl RateLimitError {
     pub fn maybe_resp(response: &reqwest::Response) -> Result<(), anyhow::Error> {
         if response.status() == 429 {
             Err(anyhow::Error::new(RateLimitError))
+        } else if response.status() == 406 {
+            Err(anyhow::Error::new(AccountBlockedError))
         } else {
             Ok(())
         }
