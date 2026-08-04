@@ -255,13 +255,12 @@ async fn grab_torrent(
     mam.add_unsats(1).await;
     add_torrent_with_category(
         qbit,
-        qbit_url,
         AddTorrent {
             torrents: AddTorrentType::Files(vec![TorrentFile {
                 filename: format!("{}.torrent", torrent.mam_id),
                 data: torrent_file_bytes.iter().copied().collect(),
             }]),
-            stopped: config.add_torrents_stopped,
+            paused: config.add_torrents_stopped,
             category: torrent.category.clone(),
             tags: if torrent.tags.is_empty() {
                 None
