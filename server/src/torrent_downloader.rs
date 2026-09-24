@@ -45,7 +45,11 @@ pub async fn grab_selected_torrents(
     }
 
     let user_info = mam.user_info().await?;
-    let max_torrents = user_info.unsat.limit.saturating_sub(user_info.unsat.count);
+    let max_torrents = user_info
+        .snatch_summary
+        .unsat
+        .limit
+        .saturating_sub(user_info.snatch_summary.unsat.count);
 
     let downloading_size: f64 = selected_torrents
         .iter()
@@ -58,7 +62,7 @@ pub async fn grab_selected_torrents(
             / config.min_ratio;
     debug!(
         "downloader, unsats: {:#?}; max_torrents: {max_torrents}; buffer: {}",
-        user_info.unsat,
+        user_info.snatch_summary.unsat,
         Size::from_bytes(remaining_buffer as u64)
     );
 

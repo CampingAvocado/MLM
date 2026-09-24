@@ -52,7 +52,11 @@ pub async fn run_autograbber(
     let _guard = AUTOGRABBER_MUTEX.lock().await;
 
     let user_info = mam.user_info().await?;
-    let max_torrents = user_info.unsat.limit.saturating_sub(user_info.unsat.count);
+    let max_torrents = user_info
+        .snatch_summary
+        .unsat
+        .limit
+        .saturating_sub(user_info.snatch_summary.unsat.count);
     let name = autograb_config
         .filter
         .name
@@ -60,7 +64,7 @@ pub async fn run_autograbber(
         .unwrap_or_else(|| index.to_string());
     debug!(
         "autograbber {}, unsats: {:#?}; max_torrents: {max_torrents}",
-        name, user_info.unsat
+        name, user_info.snatch_summary.unsat
     );
 
     let unsat_buffer = autograb_config.unsat_buffer.unwrap_or(config.unsat_buffer);

@@ -179,7 +179,7 @@ impl<'a> MaM<'a> {
 
     pub async fn add_unsats(&self, unsats: u64) {
         if let Some((_, user)) = self.user.lock().await.as_mut() {
-            user.unsat.count += unsats;
+            user.snatch_summary.unsat.count += unsats;
         }
     }
 

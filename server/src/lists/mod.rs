@@ -84,12 +84,16 @@ pub async fn run_list_import(
     autograb_trigger: Sender<()>,
 ) -> Result<()> {
     let user_info = mam.user_info().await?;
-    let max_torrents = user_info.unsat.limit.saturating_sub(user_info.unsat.count);
+    let max_torrents = user_info
+        .snatch_summary
+        .unsat
+        .limit
+        .saturating_sub(user_info.snatch_summary.unsat.count);
     debug!(
         "{} import, name: {}, unsats: {:#?}; max_torrents: {max_torrents}",
         list.list_type(),
         list.display_name(index),
-        user_info.unsat
+        user_info.snatch_summary.unsat
     );
 
     let max_torrents =
