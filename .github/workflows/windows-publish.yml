@@ -54,6 +54,7 @@ jobs:
           binary_name="mlm"
           version="${GITHUB_REF#refs/tags/v}"
           version="${version#refs/heads/}"
+          version="${version//\//-}"
           app="$binary_name-$version.exe"
           installer="$binary_name-$version-x64-setup.exe"
           echo "APP=$app" >> $GITHUB_ENV
