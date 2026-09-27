@@ -94,7 +94,7 @@ pub async fn config_page_post(
                     }
                 };
                 if let Some(category) = &tag_filter.category {
-                    ensure_category_exists(&qbit, &qbit_conf.url, category).await?;
+                    ensure_category_exists(&qbit, category).await?;
                     qbit.set_category(Some(vec![torrent.id.as_str()]), category)
                         .await?;
                     info!(
