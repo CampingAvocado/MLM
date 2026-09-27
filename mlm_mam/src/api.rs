@@ -98,7 +98,7 @@ impl<'a> MaM<'a> {
         };
         if let Err(err) = mam.user_info().await {
             if has_stored_mam_id {
-                warn!("Stored mam_id failed with {err}, falling back to config value");
+                warn!("Stored mam_id failed with {err:#}, falling back to config value");
                 let cookie = Cookie::build(("mam_id", mam_id.to_owned()))
                     .expires(OffsetDateTime::now_local()? + Duration::from_mins(10))
                     .build();

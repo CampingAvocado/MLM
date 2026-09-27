@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(try_from = "RawUserResponse")]
 pub struct UserResponse {
     pub uid: u64,
     pub username: String,
@@ -48,9 +49,51 @@ pub struct UserResponse {
     // pub vip_until: Option<String>,
 }
 
+/// Wire format of jsonLoad.php. MaM used to return the snatch summary fields
+/// (including `unsat`) at the top level, but now nests them under
+/// `snatch_summary`. Accept both.
+#[derive(Deserialize)]
+struct RawUserResponse {
+    uid: u64,
+    username: String,
+    downloaded_bytes: f64,
+    uploaded_bytes: f64,
+    seedbonus: i64,
+    wedges: u64,
+    unsat: Option<Unsats>,
+    snatch_summary: Option<SnatchSummary>,
+}
+
+#[derive(Deserialize)]
+struct SnatchSummary {
+    unsat: Option<Unsats>,
+}
+
+impl TryFrom<RawUserResponse> for UserResponse {
+    type Error = &'static str;
+
+    fn try_from(raw: RawUserResponse) -> Result<Self, Self::Error> {
+        let unsat = raw
+            .unsat
+            .or_else(|| raw.snatch_summary.and_then(|s| s.unsat))
+            .ok_or("missing unsat in user data (top level or snatch_summary)")?;
+        Ok(UserResponse {
+            uid: raw.uid,
+            username: raw.username,
+            downloaded_bytes: raw.downloaded_bytes,
+            uploaded_bytes: raw.uploaded_bytes,
+            seedbonus: raw.seedbonus,
+            wedges: raw.wedges,
+            unsat,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Unsats {
     pub count: u64,
+    // Not present in the nested snatch_summary.unsat format
+    #[serde(default)]
     pub red: bool,
     pub size: Option<u64>,
     pub limit: u64,
@@ -81,3 +124,37 @@ pub struct Unsats {
 //     pub inactive: u64,
 //     pub red: bool,
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const UNSAT: &str = r#"{"count":3,"red":false,"size":null,"limit":50}"#;
+
+    fn user_json(extra: &str) -> String {
+        format!(
+            r#"{{"uid":1,"username":"u","downloaded_bytes":1.0,"uploaded_bytes":2.0,"seedbonus":3,"wedges":4,{extra}}}"#
+        )
+    }
+
+    #[test]
+    fn unsat_at_top_level() {
+        let user: UserResponse =
+            serde_json::from_str(&user_json(&format!(r#""unsat":{UNSAT}"#))).unwrap();
+        assert_eq!(user.unsat.limit, 50);
+    }
+
+    #[test]
+    fn unsat_in_snatch_summary() {
+        let user: UserResponse = serde_json::from_str(&user_json(&format!(
+            r#""unsat":null,"snatch_summary":{{"unsat":{{"name":"Unsatisfied","count":3,"limit":50,"size":null}}}}"#
+        )))
+        .unwrap();
+        assert_eq!(user.unsat.count, 3);
+    }
+
+    #[test]
+    fn unsat_missing() {
+        assert!(serde_json::from_str::<UserResponse>(&user_json(r#""unsat":null"#)).is_err());
+    }
+}
