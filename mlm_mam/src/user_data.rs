@@ -8,7 +8,7 @@ pub struct UserResponse {
     pub uploaded_bytes: f64,
     pub seedbonus: i64,
     pub wedges: u64,
-    pub unsat: Unsats,
+    pub snatch_summary: SnatchSummary,
     // pub classname: UserClass,
     // pub connectable: String,
     // pub country_code: Option<String>,
@@ -49,9 +49,13 @@ pub struct UserResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SnatchSummary {
+    pub unsat: Unsats,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Unsats {
     pub count: u64,
-    pub red: bool,
     pub size: Option<u64>,
     pub limit: u64,
 }
@@ -81,3 +85,38 @@ pub struct Unsats {
 //     pub inactive: u64,
 //     pub red: bool,
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_user_response_reads_unsat_from_snatch_summary() {
+        let json = r#"{
+            "classname": "Power User",
+            "country_code": null,
+            "country_name": null,
+            "downloaded": "100 GiB",
+            "downloaded_bytes": 107374182400,
+            "ratio": "5",
+            "seedbonus": 1000,
+            "snatch_summary": {
+                "connectable": "yes",
+                "inactUnsat": {"count": 0, "name": "Not Seeding - Not Yet Satisfied", "size": null},
+                "seedUnsat": {"count": 3, "name": "Seeding - Not Yet Satisfied", "size": 3000},
+                "unsat": {"count": 3, "limit": 50, "name": "Unsatisfied", "size": 3000}
+            },
+            "uid": 1,
+            "uploaded": "500 GiB",
+            "uploaded_bytes": 536870912000,
+            "username": "example",
+            "vip_until": null,
+            "wedges": 2
+        }"#;
+
+        let user: UserResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(user.snatch_summary.unsat.count, 3);
+        assert_eq!(user.snatch_summary.unsat.limit, 50);
+        assert_eq!(user.snatch_summary.unsat.size, Some(3000));
+    }
+}

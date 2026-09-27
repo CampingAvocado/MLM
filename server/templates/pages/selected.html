@@ -75,7 +75,7 @@
   {% if let Some(remaining_buffer) = remaining_buffer %}
   Buffer: {{ remaining_buffer }}<br>
   {% endif %}
-  Unsats: {{ user_info.unsat.count }} / {{ user_info.unsat.limit }}<br>
+  Unsats: {{ user_info.snatch_summary.unsat.count }} / {{ user_info.snatch_summary.unsat.limit }}<br>
   Wedges: {{ user_info.wedges }}<br>
   Bonus: {{ user_info.seedbonus }}<br>
   {% if !torrents.is_empty() %}
