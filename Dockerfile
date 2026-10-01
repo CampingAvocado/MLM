@@ -52,4 +52,5 @@ COPY --from=build /app/target/release/mlm /mlm
 ENV MLM_LOG_DIR=""
 ENV MLM_CONFIG_FILE="/config/config.toml"
 ENV MLM_DB_FILE="/data/data.db"
+ENV MLM_ASSETS_DIR="/server/assets"
 CMD ["/mlm"]
