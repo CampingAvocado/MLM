@@ -252,6 +252,7 @@ pub trait HidableColumns: Sortable {
     }
 }
 
+#[allow(unused)]
 pub trait Size {
     fn style(&self) -> String;
     fn px(&self) -> u64;

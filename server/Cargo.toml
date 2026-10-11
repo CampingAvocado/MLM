@@ -36,10 +36,10 @@ native_db = { git = "https://github.com/vincent-herlemont/native_db.git", rev = 
 native_model = "0.4.20"
 once_cell = "1.21.3"
 openssl = { version = "0.10.73", features = ["vendored"] }
-qbit = { git = "https://github.com/CampingAvocado/qbittorrent-webui-api.git" }
+qbit = { git = "https://github.com/Mattress237/qbittorrent-webui-api.git", rev = "5028b5d8e7ddaf9df86626ebd3a83ef8b0af2cb8" }
 quick-xml = { version = "0.38.0", features = ["serialize"] }
 regex = "1.12.2"
-reqwest = "0.12.20"
+reqwest = { version = "0.12.20", features = ["json"] }
 reqwest_cookie_store = "0.8.0"
 sanitize-filename = { git = "https://github.com/kardeiz/sanitize-filename.git", rev = "2861a903d9e79d5cb2f613af4a282ce8a336b6e9" }
 scraper = "0.23.1"

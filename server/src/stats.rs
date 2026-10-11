@@ -1,7 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::Result;
-use mlm_db::Event;
 use mlm_mam::api::MaM;
 use native_db::Database;
 use time::{OffsetDateTime, UtcDateTime};
@@ -51,11 +50,6 @@ impl Stats {
     pub fn updates(&self) -> Receiver<UtcDateTime> {
         self.values_updated.1.clone()
     }
-}
-
-#[derive(Clone)]
-pub struct Events {
-    pub event: (Sender<Option<Event>>, Receiver<Option<Event>>),
 }
 
 #[derive(Clone)]
