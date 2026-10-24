@@ -269,7 +269,6 @@ async fn match_torrent(
         Err(err) => {
             if let MetaError::UnknownMediaType(_) = err {
                 if let Some(on_invalid_torrent) = &qbit.0.on_invalid_torrent {
-                    let qbit_url = qbit.0.url.clone();
                     let qbit = qbit::Api::new_login_username_password(
                         &qbit.0.url,
                         &qbit.0.username,
@@ -278,7 +277,7 @@ async fn match_torrent(
                     .await?;
 
                     if let Some(category) = &on_invalid_torrent.category {
-                        ensure_category_exists(&qbit, &qbit_url, category).await?;
+                        ensure_category_exists(&qbit, category).await?;
                         qbit.set_category(Some(vec![&torrent.hash]), category)
                             .await?;
                     }
