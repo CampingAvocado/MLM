@@ -59,7 +59,7 @@ dry_run = true # this makes MLM not actually download the selected torrents, onl
 # max_snatched = 10
 
 [[goodreads_list]]
-url = "https://www.goodreads.com/review/list_rss/..." # RSS feed of a Goodreads list
+url = "https://www.goodreads.com/review/list/...?shelf=to-read" # A Goodreads bookshelf page, or an old list_rss feed URL
 
 [[goodreads_list.grab]] # A block deciding what torrents to grab from the list, if a torrent matches multiple block the first one is used
 cost = "all"
